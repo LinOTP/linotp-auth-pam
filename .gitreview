@@ -1,0 +1,6 @@
+[gerrit]
+host=harrison.corp.lsexperts.de
+project=linotp-auth-pam
+defaultbranch=master
+defaultremote=origin
+defaultrebase=0
