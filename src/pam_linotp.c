@@ -523,7 +523,7 @@ int linotp_auth(char *user, char *password,
      * do the authentication check against linotp
      *
      * :param user: the user
-     * :param user: the password
+     * :param password: the password
      * :param config: the configuration parameters
      * :param state: (in and out !!) the state id of a challenge response handshake
      * :param challenge: (out) the state id of a challenge response handshake
@@ -572,7 +572,7 @@ int linotp_auth(char *user, char *password,
             config->nosslhostnameverify, config->nosslcertverify, ca_file, ca_path);
 
     if (config->debug) {
-        log_debug("result %s", chunk.memory);
+        log_debug("result: %s", chunk.memory);
     }
 
     if (all_status != 0) {
@@ -699,7 +699,6 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
     config->url = NULL;
     config->realm = NULL;
     config->resConf = NULL;
-    config->use_first_pass = 0;
     config->debug = 0;
     config->hide_otp_input = 0;
     config->prompt = strdup(password_prompt);
