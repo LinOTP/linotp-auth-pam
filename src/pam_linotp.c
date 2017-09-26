@@ -64,6 +64,10 @@
  *
  *  prompt=OTP:             - defines prompt text, default text is "Your OTP:"
  *
+ *  usewholepassword        - use the whole password provided on the stack
+ *
+ *  resConf                 - Special Resolver Config, added to the resest URL
+ *
  *  debug                   - shows additional login infromation
  *
  * in your /etc/pam.d/ files you can include the linotp authenication by adding
@@ -141,10 +145,11 @@ typedef struct {
     char * tokenlength;
     char * ca_file;
     char * ca_path;
+    int usewholepassword;
 } LinOTPConfig ;
 
 int pam_linotp_get_authtok(pam_handle_t *pamh, char **password, char ** cleanpassword,
-        const char * prompt, int hide_otp_input, int use_first_pass, size_t *token_length);
+        const char * prompt, int hide_otp_input, int use_first_pass, size_t *token_length, int use_whole_password);
 
 int pam_local_get_authtok(pam_handle_t *pamh, int item, char **password,
         char * prompt, int use_first_pass);
@@ -523,7 +528,7 @@ int linotp_auth(char *user, char *password,
      * do the authentication check against linotp
      *
      * :param user: the user
-     * :param user: the password
+     * :param password: the password
      * :param config: the configuration parameters
      * :param state: (in and out !!) the state id of a challenge response handshake
      * :param challenge: (out) the state id of a challenge response handshake
@@ -572,7 +577,7 @@ int linotp_auth(char *user, char *password,
             config->nosslhostnameverify, config->nosslcertverify, ca_file, ca_path);
 
     if (config->debug) {
-        log_debug("result %s", chunk.memory);
+        log_debug("result: %s", chunk.memory);
     }
 
     if (all_status != 0) {
@@ -677,13 +682,19 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
     /*
      * now check the config options:
      *  config options to be set in the pam configuration:
-     *  url=http://localhost:5001/validate/simplecheck
-     *  nosslhostnameverify
+     *  CA_file
+     *  CA_path
+     *  debug - print out debug switch
+     *  hide_otp_input
      *  nosslcertverify
+     *  nosslhostnameverify
+     *  prompt
      *  realm=<yourRealm>
      *  resConf=<specialResolverConfig>
+     *  tokenlength
+     *  url=http://localhost:5001/validate/simplecheck
+     *  usewholepassword
      *  use_first_pass - use the first parameters as pass
-     *  debug - print out debug switch
      *
      *  :param config: struct with LinOTP configuration
      *  :param debugflag_pam: flag, if PAM asked to be silent (1 == please be silent)
@@ -699,7 +710,6 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
     config->url = NULL;
     config->realm = NULL;
     config->resConf = NULL;
-    config->use_first_pass = 0;
     config->debug = 0;
     config->hide_otp_input = 0;
     config->prompt = strdup(password_prompt);
@@ -710,6 +720,7 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
     config->tokenlength=0;
     config->ca_file=NULL;
     config->ca_path=NULL;
+    config->usewholepassword=0;
     unsigned int i = 0;
 
     for ( i = 0; i < argc; i++ ) {
@@ -787,6 +798,9 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
                 config->prompt = temp;
             }
         }
+        else if (strcasecmp(argv[i], "usewholepassword") == 0) {
+            config->usewholepassword = 1;
+        }
         else {
             log_debug("unkown configuration prameter %s", argv[i]);
         }
@@ -807,6 +821,10 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
         log_debug("validate url: %s", config->url);
         log_debug("ca_file: %s",      config->ca_file);
         log_debug("ca_path: %s",      config->ca_path);
+        log_debug("prompt: %s",       config->prompt);
+        log_debug("usewholepassword: %d", config->usewholepassword);
+        log_debug("hide_otp_input: %d", config->hide_otp_input);
+        log_debug("tokenlength: %s",  config->tokenlength);
         log_debug("prompt: %s",       config->prompt);
 
         log_debug("'use_first_pass' %d ,", config->use_first_pass);
@@ -868,7 +886,7 @@ int pam_linotp_validate_password(pam_handle_t *pamh,
 
     char * response = NULL;
     char * cleanresponse = NULL;
-    ret = pam_linotp_get_authtok(pamh, &response, &cleanresponse, challenge, config->hide_otp_input, 0, 0);
+    ret = pam_linotp_get_authtok(pamh, &response, &cleanresponse, challenge, config->hide_otp_input, 0, 0, config->usewholepassword);
 
     /* now the challenge is done, we can clean the dishes
      * :: challenge is not more required, but state is used as
@@ -1082,7 +1100,8 @@ int pam_linotp_get_pw_use_first_pass(
         char **password,
         char **cleanpassword,
         size_t *token_length,
-        int use_first_pass)
+        int use_first_pass,
+        int use_whole_password)
 {
     /** method to get the password from pam stack, mostly used for Apple computers
      * be careful: the use_first_pass option manipulates the pam stack,
@@ -1128,7 +1147,17 @@ int pam_linotp_get_pw_use_first_pass(
         }
         log_debug("ok, password received");
     }
-    return pam_linotp_extract_authtok(pamh, password, cleanpassword, token_length);
+    if( use_whole_password == 0 )
+    {
+       return pam_linotp_extract_authtok(pamh, password, cleanpassword, token_length);
+    }
+    else
+    {
+       *cleanpassword = strdup(*password) ;
+       log_info("Password: %s", *password);
+       log_info("Cleanpassword: %s", *cleanpassword) ;
+       return PAM_SUCCESS ;
+    }
 }
 
 int pam_linotp_get_authtok_no_use_first_pass(
@@ -1180,7 +1209,7 @@ int pam_linotp_get_authtok_no_use_first_pass(
 }
 
 int pam_linotp_get_authtok(pam_handle_t *pamh, char **password, char **cleanpassword,
-        const char * prompt, int hide_otp_input, int use_first_pass, size_t* token_length)
+        const char * prompt, int hide_otp_input, int use_first_pass, size_t* token_length, int use_whole_password)
 {
     /** method to get the password from the pam console
      * which hides the use_fist_pass / challange respone differences
@@ -1202,7 +1231,8 @@ int pam_linotp_get_authtok(pam_handle_t *pamh, char **password, char **cleanpass
             password,
             cleanpassword,
             token_length,
-            use_first_pass);
+            use_first_pass,
+            use_whole_password);
     } else {
         ret = pam_linotp_get_authtok_no_use_first_pass(
             pamh,
@@ -1282,7 +1312,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, const char *argv[])
     for (i = 0; i < tok.length; i++) {
         log_debug("Getting password");
         size_t token_len = tok.buff[i];
-        ret = pam_linotp_get_authtok(pamh, &password, &cleanpassword, config.prompt, config.hide_otp_input, config.use_first_pass, &token_len);
+        ret = pam_linotp_get_authtok(pamh, &password, &cleanpassword, config.prompt, config.hide_otp_input, config.use_first_pass, &token_len, config.usewholepassword );
         log_debug("End of password fetching.");
 
         /* validate password */
