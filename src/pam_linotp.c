@@ -141,6 +141,8 @@ typedef struct {
     char * tokenlength;
     char * ca_file;
     char * ca_path;
+    long connect_timeout;
+    long request_timeout;
 } LinOTPConfig ;
 
 int pam_linotp_get_authtok(pam_handle_t *pamh, char **password, char ** cleanpassword,
@@ -423,7 +425,8 @@ char * linotp_create_url_params(CURL *curl_handle, int number_of_pairs, ...)
 int linotp_send_request(CURL *curl_handle, char * url, char * params,
         struct MemoryStruct * chunk,
         int nosslhostnameverify, int nosslcertverify,
-        char * ca_file, char * ca_path) {
+        char * ca_file, char * ca_path,
+        int connect_timeout, int request_timeout) {
     /**
      *  submit an http request using curl to linotp
      *
@@ -441,6 +444,20 @@ int linotp_send_request(CURL *curl_handle, char * url, char * params,
     status = curl_easy_setopt(curl_handle, CURLOPT_URL, url);
     if(CURLE_OK != status) {
         log_error("curl_easy_setopt CURLOPT_URL from linotp_send_request failed");
+        goto cleanup;
+    }
+
+    /* Setup the timeout */
+    status = curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT, connect_timeout);
+    if(CURLE_OK != status) {
+        log_error("curl_easy_setopt CURLOPT_CONNECTTIMEOUT from linotp_send_request failed");
+        goto cleanup;
+    }
+
+    /* Setup the timeout */
+    status = curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, request_timeout);
+    if(CURLE_OK != status) {
+        log_error("curl_easy_setopt CURLOPT_TIMEOUT from linotp_send_request failed");
         goto cleanup;
     }
 
@@ -569,7 +586,8 @@ int linotp_auth(char *user, char *password,
         log_debug("connecting to url:%s with parameters %s", config->url, param);
     }
     all_status = linotp_send_request(curl_handle, config->url, param, (void *) &chunk,
-            config->nosslhostnameverify, config->nosslcertverify, ca_file, ca_path);
+            config->nosslhostnameverify, config->nosslcertverify, ca_file, ca_path,
+            config->connect_timeout, config->request_timeout);
 
     if (config->debug) {
         log_debug("result %s", chunk.memory);
@@ -690,6 +708,7 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
      */
 
     int ret = PAM_SUCCESS;
+    char *endptr;
 
     /* reset configuration */
     config->nosslhostnameverify = 0;
@@ -710,6 +729,8 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
     config->tokenlength=0;
     config->ca_file=NULL;
     config->ca_path=NULL;
+    config->connect_timeout=10;
+    config->request_timeout=15;
     unsigned int i = 0;
 
     for ( i = 0; i < argc; i++ ) {
@@ -785,6 +806,22 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
                 return (PAM_AUTH_ERR);
             } else {
                 config->prompt = temp;
+            }
+        }
+	/* connection_timeout */
+        else if (check_prefix(argv[i], "connection_timeout=", &temp) > 0) {
+            config->connect_timeout = strtol(temp, &endptr, 10);
+            if (*temp == '\0' || *endptr != '\0') {
+                log_error("Connection timeout parameter is not an integer: %s", temp);
+                return (PAM_AUTH_ERR);
+            }
+        }
+	/* request_timeout */
+        else if (check_prefix(argv[i], "request_timeout=", &temp) > 0) {
+            config->request_timeout = strtol(temp, &endptr, 10);
+            if (*temp == '\0' || *endptr != '\0') {
+                log_error("Request timeout parameter is not an integer: %s", temp);
+                return (PAM_AUTH_ERR);
             }
         }
         else {
