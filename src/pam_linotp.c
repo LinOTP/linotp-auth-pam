@@ -524,15 +524,15 @@ int get_realm(char *username, LinOTPConfig *config, char **realm) {
     int ret;
     struct passwd *pw, pwd;
     char path[PATH_MAX] = { 0 };
-    char *p;
+    char *p, *o;
 
     log_debug("getting realm information");
 
     /* if no realm_file is configured, use the global realm name */
     if (!config->realm_file) {
 use_default:
-	if (config->realm) {
-	    *realm = strdup(config->realm);
+        if (config->realm) {
+            *realm = strdup(config->realm);
             if (!*realm) {
                 log_error("could not copy realm name");
                 return -1;
@@ -545,23 +545,65 @@ use_default:
         return 0;
     }
 
-    /* figure out users's home directory */
-    ret = getpwnam_r(username, &pwd, buf, sizeof(buf), &pw);
-    if (ret) {
-        log_error("could not get user's pwent");
-        return -1;
-    }
-    if (!pw) {
-        log_debug("user not found using getpwnam_r: %s", username);
-        return -1;
-    }
-    ret = snprintf(path, sizeof(path), "%s/%s", pw->pw_dir, config->realm_file);
-    if (ret < 0 || ret >= sizeof(path)) {
-        log_error("could not build realm file path");
-        return -1;
+    /* parse realm_file parameter */
+    p = config->realm_file;
+    o = path;
+    while (*p != '\0' && (o < path + sizeof(path) - 1)) {
+        switch (*p) {
+        case '~':
+            if (*(p+1) == '~') {
+                /* literal tilde character */
+                *o = '~';
+                p++;
+            } else {
+                /* path to users home directory */
+                ret = getpwnam_r(username, &pwd, buf, sizeof(buf), &pw);
+                if (ret) {
+                    log_error("could not get user's pwent");
+                    return -1;
+                }
+                if (!pw) {
+                    log_debug("user not found using getpwnam_r: %s", username);
+                    return -1;
+                }
+                if (strlen(pw->pw_dir) >= (sizeof(path) - (o - path) - 2)) {
+                    log_error("home dir path does not fit into buffer");
+                    return -1;
+                }
+                strcpy(o, pw->pw_dir);
+                o += strlen(pw->pw_dir) - 1;
+            }
+            break;
+        case '%':
+            if (*(p+1) == '%') {
+                /* literal percent character */
+                *o = '%';
+                p++;
+            } else if (*(p+1) == 'u') {
+                /* username */
+                if (strlen(username) >= (sizeof(path) - (o - path) - 2)) {
+                    log_error("username path does not fit into buffer");
+                    return -1;
+                }
+                strcpy(o, username);
+                o += strlen(username) - 1;
+                p++;
+            } else {
+                /* unknown format token, just copy literal token */
+                *o++ = '%';
+                *o = *(p+1);
+                p++;
+            }
+            break;
+        default:
+            *o = *p;
+        }
+        p++;
+        o++;
     }
 
     /* read realm file */
+    log_debug("checking user realm file '%s'", path);
     fd = open(path, 0, O_RDONLY);
     if (fd < 0) {
         /* special case: file not found -> use default settings */
