@@ -86,6 +86,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <fcntl.h>
 
 #include "zeromem.h"
 
@@ -141,6 +142,7 @@ typedef struct {
     char * tokenlength;
     char * ca_file;
     char * ca_path;
+    char * realm_file;
 } LinOTPConfig ;
 
 int pam_linotp_get_authtok(pam_handle_t *pamh, char **password, char ** cleanpassword,
@@ -515,6 +517,136 @@ cleanup:
     curl_easy_cleanup(curl_handle);
     return status;
 }
+
+int get_realm(char *username, LinOTPConfig *config, char **realm) {
+    int fd;
+    char buf[2048];
+    int ret;
+    struct passwd *pw, pwd;
+    char path[PATH_MAX] = { 0 };
+    char *p, *o;
+
+    log_debug("getting realm information");
+
+    /* if no realm_file is configured, use the global realm name */
+    if (!config->realm_file) {
+use_default:
+        if (config->realm) {
+            *realm = strdup(config->realm);
+            if (!*realm) {
+                log_error("could not copy realm name");
+                return -1;
+            }
+            log_debug("using config realm '%s'", *realm);
+        } else {
+            *realm = NULL;
+            log_debug("using empty realm");
+        }
+        return 0;
+    }
+
+    /* parse realm_file parameter */
+    p = config->realm_file;
+    o = path;
+    while (*p != '\0' && (o < path + sizeof(path) - 1)) {
+        switch (*p) {
+        case '~':
+            if (*(p+1) == '~') {
+                /* literal tilde character */
+                *o = '~';
+                p++;
+            } else {
+                /* path to users home directory */
+                ret = getpwnam_r(username, &pwd, buf, sizeof(buf), &pw);
+                if (ret) {
+                    log_error("could not get user's pwent");
+                    return -1;
+                }
+                if (!pw) {
+                    log_debug("user not found using getpwnam_r: %s", username);
+                    return -1;
+                }
+                if (strlen(pw->pw_dir) >= (sizeof(path) - (o - path) - 2)) {
+                    log_error("home dir path does not fit into buffer");
+                    return -1;
+                }
+                strcpy(o, pw->pw_dir);
+                o += strlen(pw->pw_dir) - 1;
+            }
+            break;
+        case '%':
+            if (*(p+1) == '%') {
+                /* literal percent character */
+                *o = '%';
+                p++;
+            } else if (*(p+1) == 'u') {
+                /* username */
+                if (strlen(username) >= (sizeof(path) - (o - path) - 2)) {
+                    log_error("username path does not fit into buffer");
+                    return -1;
+                }
+                strcpy(o, username);
+                o += strlen(username) - 1;
+                p++;
+            } else {
+                /* unknown format token, just copy literal token */
+                *o++ = '%';
+                *o = *(p+1);
+                p++;
+            }
+            break;
+        default:
+            *o = *p;
+        }
+        p++;
+        o++;
+    }
+
+    /* read realm file */
+    log_debug("checking user realm file '%s'", path);
+    fd = open(path, 0, O_RDONLY);
+    if (fd < 0) {
+        /* special case: file not found -> use default settings */
+        if (errno == ENOENT) {
+            log_debug("user realm file not found, using defaults");
+            goto use_default;
+        }
+        /* everything else is an error */
+        log_debug("can't open realm file '%s' for user '%s': %s", path, username, strerror(errno));
+        return -1;
+    }
+    ret = read(fd, buf, sizeof(buf));
+    if (ret < 0) {
+        log_debug("can't read realm file '%s' for user '%s': %s", path, username, strerror(errno));
+        close(fd); /* closing not earlier than here to preserve errno for logging */
+        return -1;
+    }
+    close(fd);
+    if (ret >= sizeof(buf)) {
+        log_debug("realm file '%s' for user '%s' is too large", path, username);
+        return -1;
+    }
+    buf[ret] = '\0';
+
+    /* we only want the first line -> terminate after newline */
+    p = strchr(buf, '\n');
+    if (p)
+        *p = '\0';
+
+    if (strlen(buf) > REALMMAXLEN) {
+        log_debug("realm name in realm file '%s' for user '%s' is too large", path, username);
+        return -1;
+    }
+
+    *realm = strdup(buf);
+    if (!*realm) {
+        log_error("could not copy realm name");
+        return -1;
+    }
+    log_debug("using realm '%s'", *realm);
+    return 0;
+}
+
 /********** LinOTP stuff ***************************/
 int linotp_auth(char *user, char *password,
         LinOTPConfig *config, char ** state, char ** challenge,
@@ -553,12 +685,19 @@ int linotp_auth(char *user, char *password,
 
     curl_easy_setopt(curl_handle, CURLOPT_ERRORBUFFER, errorBuffer);
 
+    char *realm = NULL;
+    if (get_realm(user, config, &realm)) {
+        log_error("could not get realm!");
+        returnValue = PAM_AUTH_ERR;
+        goto cleanup;
+    }
     param = linotp_create_url_params(curl_handle, 5,
-            "realm",   config->realm,
+            "realm",   realm,
             "resConf", config->resConf,
             "user",    user,
             "pass",    password,
             "state",  *state);
+    erase_string(realm);
 
     if (param == NULL) {
         log_error("could not allocate size for url");
@@ -710,6 +849,7 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
     config->tokenlength=0;
     config->ca_file=NULL;
     config->ca_path=NULL;
+    config->realm_file=NULL;
     unsigned int i = 0;
 
     for ( i = 0; i < argc; i++ ) {
@@ -768,6 +908,11 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
         }
         else if (check_prefix(argv[i], "CA_path=", &temp) > 0) {
             config->ca_path = temp;
+        }
+        /* check for realm_file */
+        else if (check_prefix(argv[i], "realm_file=", &temp) > 0) {
+            log_debug("realm_file config option: %s", temp);
+            config->realm_file = temp;
         }
         /* check for tokenlength */
         else if (check_prefix(argv[i], "tokenlength=", &temp) > 0) {

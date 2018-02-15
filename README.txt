@@ -41,6 +41,7 @@ Config options to be set in the pam configuration:
         nosslhostnameverify
         nosslcertverify
         realm=<yourRealm>
+        realm_file=<perUserRealmFilename>
         resConf=<specialResolverConfig>
 
 
