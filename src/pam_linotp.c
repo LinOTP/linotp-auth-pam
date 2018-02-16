@@ -141,7 +141,7 @@ typedef struct {
     char * tokenlength;
     char * ca_file;
     char * ca_path;
-    long connect_timeout;
+    long connection_timeout;
     long request_timeout;
 } LinOTPConfig ;
 
@@ -426,7 +426,7 @@ int linotp_send_request(CURL *curl_handle, char * url, char * params,
         struct MemoryStruct * chunk,
         int nosslhostnameverify, int nosslcertverify,
         char * ca_file, char * ca_path,
-        int connect_timeout, int request_timeout) {
+        int connection_timeout, int request_timeout) {
     /**
      *  submit an http request using curl to linotp
      *
@@ -448,7 +448,7 @@ int linotp_send_request(CURL *curl_handle, char * url, char * params,
     }
 
     /* Setup the timeout */
-    status = curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT, connect_timeout);
+    status = curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT, connection_timeout);
     if(CURLE_OK != status) {
         log_error("curl_easy_setopt CURLOPT_CONNECTTIMEOUT from linotp_send_request failed");
         goto cleanup;
@@ -587,7 +587,7 @@ int linotp_auth(char *user, char *password,
     }
     all_status = linotp_send_request(curl_handle, config->url, param, (void *) &chunk,
             config->nosslhostnameverify, config->nosslcertverify, ca_file, ca_path,
-            config->connect_timeout, config->request_timeout);
+            config->connection_timeout, config->request_timeout);
 
     if (config->debug) {
         log_debug("result %s", chunk.memory);
@@ -729,7 +729,7 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
     config->tokenlength=0;
     config->ca_file=NULL;
     config->ca_path=NULL;
-    config->connect_timeout=10;
+    config->connection_timeout=10;
     config->request_timeout=15;
     unsigned int i = 0;
 
@@ -810,7 +810,7 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
         }
 	/* connection_timeout */
         else if (check_prefix(argv[i], "connection_timeout=", &temp) > 0) {
-            config->connect_timeout = strtol(temp, &endptr, 10);
+            config->connection_timeout = strtol(temp, &endptr, 10);
             if (*temp == '\0' || *endptr != '\0') {
                 log_error("Connection timeout parameter is not an integer: %s", temp);
                 return (PAM_AUTH_ERR);
