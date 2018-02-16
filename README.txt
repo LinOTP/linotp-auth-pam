@@ -42,6 +42,8 @@ Config options to be set in the pam configuration:
         nosslcertverify
         realm=<yourRealm>
         resConf=<specialResolverConfig>
+        connect_timeout=<curlConnectTimeout>
+        request_timeout=<curlRequestTimeout>
 
 
 Have fun.
