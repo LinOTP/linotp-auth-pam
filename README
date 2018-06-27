@@ -38,6 +38,7 @@ in every service you want to authenticate with OTP.
 
 Config options to be set in the pam configuration:
         url=http://localhost:5001/validate/simplecheck
+        proxy=http://proxy.location:3128/
         nosslhostnameverify
         nosslcertverify
         realm=<yourRealm>
