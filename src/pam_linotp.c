@@ -610,7 +610,7 @@ int linotp_auth(char *user, char *password,
                 erase_string(*challenge);
             }
         }
-        if ((*challenge) || (*stat)) {
+        if ((*challenge == NULL) || (*state == NULL)) {
             log_error("strdup failed during linotp_auth!");
             returnValue = PAM_ABORT;
         } else
