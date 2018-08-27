@@ -530,6 +530,7 @@ cleanup:
     curl_easy_cleanup(curl_handle);
     return status;
 }
+
 /********** LinOTP stuff ***************************/
 int linotp_auth(char *user, char *password,
         LinOTPConfig *config, char ** state, char ** challenge,
@@ -577,6 +578,13 @@ int linotp_auth(char *user, char *password,
             "client", config->client,
             "state",  *state);
     } else {
+        char client[HOST_NAME_MAX + 1] = "";
+
+        if (!gethostname(client, HOST_NAME_MAX)) {
+            log_error("Error getting local hostname!");
+            goto cleanup;
+        }
+
         param = linotp_create_url_params(curl_handle, 5,
             "realm",   config->realm,
             "resConf", config->resConf,
