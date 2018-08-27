@@ -580,7 +580,7 @@ int linotp_auth(char *user, char *password,
     } else {
         char client[HOST_NAME_MAX + 1] = "";
 
-        if (!gethostname(client, HOST_NAME_MAX)) {
+        if (gethostname(client, HOST_NAME_MAX) < 0) {
             log_error("Error getting local hostname!");
             goto cleanup;
         }
