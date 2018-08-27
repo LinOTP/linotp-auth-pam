@@ -86,6 +86,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <limits.h>
 
 #include "zeromem.h"
 
@@ -121,6 +122,7 @@ int debugflag = 0;
  config options which could be set in the pam configuration:
       url=http://localhost:5001/validate/simplecheck
       proxy=http://proxy.location:3128/
+      client=localhost
       nosslhostnameverify
       nosslcertverify
       realm
@@ -132,6 +134,7 @@ int debugflag = 0;
 typedef struct {
     char * url;
     char *proxy;
+    char *client;
     int nosslhostnameverify;
     int nosslcertverify;
     char * realm;
@@ -565,12 +568,22 @@ int linotp_auth(char *user, char *password,
 
     curl_easy_setopt(curl_handle, CURLOPT_ERRORBUFFER, errorBuffer);
 
-    param = linotp_create_url_params(curl_handle, 5,
+    if (config->client) {
+        param = linotp_create_url_params(curl_handle, 5,
+            "realm",   config->realm,
+            "resConf", config->resConf,
+            "user",    user,
+            "pass",    password,
+            "client", config->client,
+            "state",  *state);
+    } else {
+        param = linotp_create_url_params(curl_handle, 5,
             "realm",   config->realm,
             "resConf", config->resConf,
             "user",    user,
             "pass",    password,
             "state",  *state);
+    }
 
     if (param == NULL) {
         log_error("could not allocate size for url");
@@ -714,6 +727,7 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
     config->use_first_pass = 0;
     config->url = NULL;
     config->proxy = NULL;
+    config->client = NULL;
     config->realm = NULL;
     config->resConf = NULL;
     config->use_first_pass = 0;
@@ -760,6 +774,19 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
                 config->proxy = temp;
             }
         }
+
+        /* check for client */
+        else if (check_prefix(argv[i], "client=", &temp) > 0) {
+            // this is the validateurl
+            if (strlen(temp) > HOST_NAME_MAX) {
+                log_error("Your client hostname is too long: %s (max %d)", argv[i],
+                        URLMAXLEN);
+                return (PAM_AUTH_ERR);
+            } else {
+                config->client = temp;
+            }
+        }
+
 
         /* check for realm */
         else if (check_prefix(argv[i], "realm=", &temp) > 0) {
