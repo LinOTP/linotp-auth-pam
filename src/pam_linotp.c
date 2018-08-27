@@ -590,6 +590,7 @@ int linotp_auth(char *user, char *password,
             "resConf", config->resConf,
             "user",    user,
             "pass",    password,
+            "client",  client,
             "state",  *state);
     }
 
