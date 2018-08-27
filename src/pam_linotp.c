@@ -780,7 +780,7 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
             // this is the validateurl
             if (strlen(temp) > HOST_NAME_MAX) {
                 log_error("Your client hostname is too long: %s (max %d)", argv[i],
-                        URLMAXLEN);
+                        HOST_NAME_MAX);
                 return (PAM_AUTH_ERR);
             } else {
                 config->client = temp;
