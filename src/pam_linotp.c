@@ -648,7 +648,7 @@ int linotp_auth(char *user, char *password,
                 erase_string(*challenge);
             }
         }
-        if ((*challenge) || (*stat)) {
+        if ((*challenge == NULL) || (*state == NULL)) {
             log_error("strdup failed during linotp_auth!");
             returnValue = PAM_ABORT;
         } else
@@ -1217,31 +1217,29 @@ int pam_linotp_get_authtok_no_use_first_pass(
      */
 
     int ret = PAM_AUTHTOK_ERR;
-    /* tokenlength is 0, if there was no configurated token_length,
-     * so we cant ask for !(*token_length).
-     */
-    if(!(token_length)) {
-        log_error("no token length given (pam_linotp_get_authtok)");
-        return PAM_AUTH_ERR;
-    } else {
-        /* Using prompt to ask for password */
-        log_debug("Using Prompt to get login data");
-        if (!prompt){
-            prompt = "Your OTP: ";
-        }
-        if(hide_otp_input){
-            ret = pam_prompt(pamh, PAM_PROMPT_ECHO_OFF, (char **)password, "%s", prompt);
-        } else {
-            ret = pam_prompt(pamh, PAM_PROMPT_ECHO_ON, (char **)password, "%s", prompt);
-        }
-        if (!password || ret != PAM_SUCCESS){
-            log_debug("cant get password");
-            return PAM_AUTHTOK_ERR;
-        }
-        log_debug("OTP received successfully %s", *password);
-        *token_length = (size_t)strlen(*password);
-        return ret;
+    /* Using prompt to ask for password */
+    if (!prompt){
+	    prompt = "Your OTP: ";
     }
+    log_debug("Using Prompt '%s' to get login data", prompt);
+    if(hide_otp_input){
+	    ret = pam_prompt(pamh, PAM_PROMPT_ECHO_OFF, (char **)password, "%s", prompt);
+    } else {
+	    ret = pam_prompt(pamh, PAM_PROMPT_ECHO_ON, (char **)password, "%s", prompt);
+    }
+    if (!password || ret != PAM_SUCCESS){
+	    log_debug("cant get password");
+	    return PAM_AUTHTOK_ERR;
+    }
+    log_debug("OTP received successfully %s", *password);
+    if(!(token_length)) {
+	    log_error("no token length given (pam_linotp_get_authtok)");
+    }
+    else
+    {
+	    *token_length = (size_t)strlen(*password);
+    }
+    return ret;
 }
 
 int pam_linotp_get_authtok(pam_handle_t *pamh, char **password, char **cleanpassword,
