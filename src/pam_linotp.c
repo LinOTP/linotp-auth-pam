@@ -86,6 +86,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <limits.h>
 
 #include "zeromem.h"
 
@@ -120,6 +121,8 @@ int debugflag = 0;
 /*
  config options which could be set in the pam configuration:
       url=http://localhost:5001/validate/simplecheck
+      proxy=http://proxy.location:3128/
+      client=localhost
       nosslhostnameverify
       nosslcertverify
       realm
@@ -130,6 +133,8 @@ int debugflag = 0;
 
 typedef struct {
     char * url;
+    char *proxy;
+    char *client;
     int nosslhostnameverify;
     int nosslcertverify;
     char * realm;
@@ -420,7 +425,7 @@ char * linotp_create_url_params(CURL *curl_handle, int number_of_pairs, ...)
 }
 
 
-int linotp_send_request(CURL *curl_handle, char * url, char * params,
+int linotp_send_request(CURL *curl_handle, char * url, char * proxy, char * params,
         struct MemoryStruct * chunk,
         int nosslhostnameverify, int nosslcertverify,
         char * ca_file, char * ca_path) {
@@ -437,6 +442,16 @@ int linotp_send_request(CURL *curl_handle, char * url, char * params,
      *  :return: success status
      */
      int status = 0;
+
+    /* If set, set up proxy request */
+    if (proxy) {
+        status = curl_easy_setopt(curl_handle, CURLOPT_PROXY, proxy);
+        if(CURLE_OK != status) {
+            log_error("curl_easy_setopt CURLOPT_PROXY from linotp_send_request failed");
+            goto cleanup;
+        }
+    }
+    
     /* Setup the base url */
     status = curl_easy_setopt(curl_handle, CURLOPT_URL, url);
     if(CURLE_OK != status) {
@@ -515,6 +530,7 @@ cleanup:
     curl_easy_cleanup(curl_handle);
     return status;
 }
+
 /********** LinOTP stuff ***************************/
 int linotp_auth(char *user, char *password,
         LinOTPConfig *config, char ** state, char ** challenge,
@@ -553,12 +569,30 @@ int linotp_auth(char *user, char *password,
 
     curl_easy_setopt(curl_handle, CURLOPT_ERRORBUFFER, errorBuffer);
 
-    param = linotp_create_url_params(curl_handle, 5,
+    if (config->client) {
+        param = linotp_create_url_params(curl_handle, 5,
             "realm",   config->realm,
             "resConf", config->resConf,
             "user",    user,
             "pass",    password,
+            "client", config->client,
             "state",  *state);
+    } else {
+        char client[HOST_NAME_MAX + 1] = "";
+
+        if (gethostname(client, HOST_NAME_MAX) < 0) {
+            log_error("Error getting local hostname!");
+            goto cleanup;
+        }
+
+        param = linotp_create_url_params(curl_handle, 5,
+            "realm",   config->realm,
+            "resConf", config->resConf,
+            "user",    user,
+            "pass",    password,
+            "client",  client,
+            "state",  *state);
+    }
 
     if (param == NULL) {
         log_error("could not allocate size for url");
@@ -566,9 +600,13 @@ int linotp_auth(char *user, char *password,
     }
 
     if (config->debug) {
-        log_debug("connecting to url:%s with parameters %s", config->url, param);
+        if (config->proxy) {
+            log_debug("connecting to url:%s via proxy: %s with parameters %s", config->url, config->proxy, param);
+        } else {
+            log_debug("connecting to url:%s with parameters %s", config->url, param);    
+        }
     }
-    all_status = linotp_send_request(curl_handle, config->url, param, (void *) &chunk,
+    all_status = linotp_send_request(curl_handle, config->url, config->proxy, param, (void *) &chunk,
             config->nosslhostnameverify, config->nosslcertverify, ca_file, ca_path);
 
     if (config->debug) {
@@ -610,7 +648,7 @@ int linotp_auth(char *user, char *password,
                 erase_string(*challenge);
             }
         }
-        if ((*challenge) || (*stat)) {
+        if ((*challenge == NULL) || (*state == NULL)) {
             log_error("strdup failed during linotp_auth!");
             returnValue = PAM_ABORT;
         } else
@@ -697,6 +735,8 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
     /*'use_first_pass', we will try to get the password from the pam stack."*/
     config->use_first_pass = 0;
     config->url = NULL;
+    config->proxy = NULL;
+    config->client = NULL;
     config->realm = NULL;
     config->resConf = NULL;
     config->use_first_pass = 0;
@@ -732,6 +772,31 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
             }
 
         }
+        /* check for proxy */
+        else if (check_prefix(argv[i], "proxy=", &temp) > 0) {
+            // this is the validateurl
+            if (strlen(temp) > URLMAXLEN) {
+                log_error("Your proxy url is to long: %s (max %d)", argv[i],
+                        URLMAXLEN);
+                return (PAM_AUTH_ERR);
+            } else {
+                config->proxy = temp;
+            }
+        }
+
+        /* check for client */
+        else if (check_prefix(argv[i], "client=", &temp) > 0) {
+            // this is the validateurl
+            if (strlen(temp) > HOST_NAME_MAX) {
+                log_error("Your client hostname is too long: %s (max %d)", argv[i],
+                        HOST_NAME_MAX);
+                return (PAM_AUTH_ERR);
+            } else {
+                config->client = temp;
+            }
+        }
+
+
         /* check for realm */
         else if (check_prefix(argv[i], "realm=", &temp) > 0) {
             if (strlen(temp) > REALMMAXLEN) {
@@ -1152,31 +1217,29 @@ int pam_linotp_get_authtok_no_use_first_pass(
      */
 
     int ret = PAM_AUTHTOK_ERR;
-    /* tokenlength is 0, if there was no configurated token_length,
-     * so we cant ask for !(*token_length).
-     */
-    if(!(token_length)) {
-        log_error("no token length given (pam_linotp_get_authtok)");
-        return PAM_AUTH_ERR;
-    } else {
-        /* Using prompt to ask for password */
-        log_debug("Using Prompt to get login data");
-        if (!prompt){
-            prompt = "Your OTP: ";
-        }
-        if(hide_otp_input){
-            ret = pam_prompt(pamh, PAM_PROMPT_ECHO_OFF, (char **)password, "%s", prompt);
-        } else {
-            ret = pam_prompt(pamh, PAM_PROMPT_ECHO_ON, (char **)password, "%s", prompt);
-        }
-        if (!password || ret != PAM_SUCCESS){
-            log_debug("cant get password");
-            return PAM_AUTHTOK_ERR;
-        }
-        log_debug("OTP received successfully %s", *password);
-        *token_length = (size_t)strlen(*password);
-        return ret;
+    /* Using prompt to ask for password */
+    if (!prompt){
+	    prompt = "Your OTP: ";
     }
+    log_debug("Using Prompt '%s' to get login data", prompt);
+    if(hide_otp_input){
+	    ret = pam_prompt(pamh, PAM_PROMPT_ECHO_OFF, (char **)password, "%s", prompt);
+    } else {
+	    ret = pam_prompt(pamh, PAM_PROMPT_ECHO_ON, (char **)password, "%s", prompt);
+    }
+    if (!password || ret != PAM_SUCCESS){
+	    log_debug("cant get password");
+	    return PAM_AUTHTOK_ERR;
+    }
+    log_debug("OTP received successfully %s", *password);
+    if(!(token_length)) {
+	    log_error("no token length given (pam_linotp_get_authtok)");
+    }
+    else
+    {
+	    *token_length = (size_t)strlen(*password);
+    }
+    return ret;
 }
 
 int pam_linotp_get_authtok(pam_handle_t *pamh, char **password, char **cleanpassword,
