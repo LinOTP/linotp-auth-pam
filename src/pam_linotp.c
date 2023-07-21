@@ -47,6 +47,7 @@
  *  pam_linotp.so           - the module ref, which should be in /lib/security
  *                            in most cases
  *  url=https://l...        - the reference to your linotp server
+ *  sock=/run/...           - optional pointer to a UNIX domain socket
  *  realm=..                - the default realm, where the user is to be searched
  *  ca_file=fullpath-cafile - added support for sslopt CURLOPT_CAINFO. This option
  *                            is not needed on MacOS installations. There, the
@@ -130,6 +131,7 @@ int debugflag = 0;
 
 typedef struct {
     char * url;
+    char * sock;
     int nosslhostnameverify;
     int nosslcertverify;
     char * realm;
@@ -420,7 +422,7 @@ char * linotp_create_url_params(CURL *curl_handle, int number_of_pairs, ...)
 }
 
 
-int linotp_send_request(CURL *curl_handle, char * url, char * params,
+int linotp_send_request(CURL *curl_handle, char * url, char * sock, char * params,
         struct MemoryStruct * chunk,
         int nosslhostnameverify, int nosslcertverify,
         char * ca_file, char * ca_path) {
@@ -429,6 +431,7 @@ int linotp_send_request(CURL *curl_handle, char * url, char * params,
      *
      *  :param curl_handle: the curl handler
      *  :param url: the linotp url
+     *  :param sock: the linotp UNIX socket
      *  :param params: the POST parameters
      *  :param chunk: the result memory chunk
      *  :param nosslhostnameverify: ssl w. or wo. ssl hostname verify
@@ -437,6 +440,15 @@ int linotp_send_request(CURL *curl_handle, char * url, char * params,
      *  :return: success status
      */
      int status = 0;
+    /* Use UNIX Socket */
+    if (sock != NULL && strlen(sock) > 0) {
+        status = curl_easy_setopt(curl_handle, CURLOPT_UNIX_SOCKET_PATH, sock);
+        if(CURLE_OK != status) {
+            log_error("curl_easy_setopt CURLOPT_UNIX_SOCKET_PATH from linotp_send_request failed");
+            goto cleanup;
+        }
+    }
+
     /* Setup the base url */
     status = curl_easy_setopt(curl_handle, CURLOPT_URL, url);
     if(CURLE_OK != status) {
@@ -568,7 +580,7 @@ int linotp_auth(char *user, char *password,
     if (config->debug) {
         log_debug("connecting to url:%s with parameters %s", config->url, param);
     }
-    all_status = linotp_send_request(curl_handle, config->url, param, (void *) &chunk,
+    all_status = linotp_send_request(curl_handle, config->url, config->sock, param, (void *) &chunk,
             config->nosslhostnameverify, config->nosslcertverify, ca_file, ca_path);
 
     if (config->debug) {
@@ -697,6 +709,7 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
     /*'use_first_pass', we will try to get the password from the pam stack."*/
     config->use_first_pass = 0;
     config->url = NULL;
+    config->sock = NULL;
     config->realm = NULL;
     config->resConf = NULL;
     config->use_first_pass = 0;
@@ -729,6 +742,18 @@ int pam_linotp_get_config(int argc, const char *argv[], LinOTPConfig * config, i
                 return (PAM_AUTH_ERR);
             } else {
                 config->url = temp;
+            }
+
+        }
+        /* check for socket path */
+        else if (check_prefix(argv[i], "sock=", &temp) > 0) {
+            // this is the validateurl
+            if (strlen(temp) > URLMAXLEN) {
+                log_error("Your sock is to long: %s (max %d)", argv[i],
+                        URLMAXLEN);
+                return (PAM_AUTH_ERR);
+            } else {
+                config->sock = temp;
             }
 
         }
@@ -844,6 +869,9 @@ int pam_linotp_validate_password(pam_handle_t *pamh,
     log_debug("pam_linotp_validate_password");
     log_debug("user: %s", user);
     log_debug("url : %s", config->url);
+    if (config->sock != NULL && strlen(config->sock) > 0) {
+        log_debug("sock: %s", config->sock);
+    }
     if (config->ca_path && *(config->ca_path) != '\0') {
         log_debug("with ca_path: %s", config->ca_path);
     }

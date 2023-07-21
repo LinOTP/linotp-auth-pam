@@ -8,7 +8,7 @@ Standards-Version: 3.9.1
 Package: libpam-linotp
 Architecture: amd64
 Homepage: https://www.linotp.org/
-Depends: ${misc:Depends}, libcurl3, ${shlibs:Depends} 
+Depends: ${misc:Depends}, ${shlibs:Depends} 
 Description: PAM module for one time passwords with LinOTP
  This PAM moculde directly communicates to the 
  LinOTP server, so that there is no RADIUS 
